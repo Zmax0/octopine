@@ -1,0 +1,298 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.39.6.
+--
+-- see: https://github.com/sol/hpack
+
+name:           octopine
+version:        0.1.0
+description:    Please see the README on GitHub at <https://github.com/Zmax0/octopine#readme>
+homepage:       https://github.com/Zmax0/octopine#readme
+bug-reports:    https://github.com/Zmax0/octopine/issues
+author:         Zmax0
+maintainer:     example@example.com
+copyright:      2025 Zmax0
+license:        Apache-2.0
+license-file:   LICENSE
+build-type:     Custom
+
+source-repository head
+  type: git
+  location: https://github.com/Zmax0/octopine
+
+library
+  exposed-modules:
+      Common
+      Common.Codec
+      Common.Codec.Chunk
+      Common.Codec.Shadowsocks.Aead
+      Common.Codec.Shadowsocks.Aead2022
+      Common.Codec.Shadowsocks.Aead2022.TCP
+      Common.Codec.Shadowsocks.Identity
+      Common.Codec.Shadowsocks.TCP.Session
+      Common.Codec.Socks.Address
+      Common.Codec.VMess.Address
+      Common.Codec.VMess.Aead
+      Common.Codec.VMess.Aead.Header
+      Common.Codec.VMess.AeadBodyCodec
+      Common.Codec.VMess.AeadDecoder
+      Common.Codec.VMess.AeadEncoder
+      Common.Codec.VMess.Session
+      Common.Codec.VMess.ShakeSizeParser
+      Common.Config
+      Common.Crypto
+      Common.Crypto.Aead
+      Common.Crypto.Aead.Authenticator
+      Common.Crypto.Aead.NonceGenerator
+      Common.Crypto.Aes
+      Common.Crypto.ChaCha8Poly1305
+      Common.Dice
+      Common.Exception
+      Common.Lang.Go
+      Common.Logger
+      Common.Network.Address
+      Common.Protocol
+      Common.Protocol.Shadowsocks
+      Common.Protocol.Shadowsocks.Aead
+      Common.Protocol.Shadowsocks.Aead2022
+      Common.Protocol.Shadowsocks.Aead2022.UDP
+      Common.Protocol.Shadowsocks.PacketWindowFilter
+      Common.Protocol.Shadowsocks.UDP.Session
+      Common.Protocol.Shadowsocks.User
+      Common.Protocol.Socks
+      Common.Protocol.Trojan
+      Common.Protocol.VMess
+      Common.Protocol.VMess.Aead
+      Common.Protocol.VMess.Aead.AuthID
+      Common.Protocol.VMess.Aead.KDF
+      Common.Protocol.VMess.Header
+      Common.Protocol.VMess.Header.AddressType
+      Common.Protocol.VMess.Header.RequestCommand
+      Common.Protocol.VMess.Header.RequestOption
+      Common.Protocol.VMess.Header.SecurityType
+      Common.Protocol.VMess.ID
+      Common.Util
+      Server
+      Server.Protocol
+      Server.Protocol.Shadowsocks
+      Server.Protocol.Shadowsocks.Aead2022.UDP
+      Server.Protocol.Shadowsocks.Codec
+      Server.Protocol.Shadowsocks.User
+      Server.Protocol.Trojan
+      Server.Protocol.Trojan.Codec
+      Server.Protocol.VMess
+      Server.Protocol.VMess.Codec
+      Server.Transport.Channel
+      Server.Transport.Shadowsocks.Datagram
+      Server.Transport.Stream
+      Server.Transport.Transport
+  other-modules:
+      Paths_octopine
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  build-depends:
+      aeson
+    , async
+    , base >=4.9 && <5
+    , base16-bytestring
+    , base64-bytestring
+    , binary
+    , blake3
+    , bytestring
+    , clock
+    , containers
+    , crypton
+    , digest
+    , directory
+    , exceptions
+    , fast-logger
+    , formatting
+    , iproute
+    , keter-rate-limiting-plugin
+    , lens
+    , list-t
+    , lrucache
+    , network
+    , o-clock
+    , quic
+    , ram
+    , random
+    , stm
+    , stm-containers
+    , template-haskell
+    , text
+    , time
+    , tls
+    , transformers
+    , utf8-string
+    , uuid
+    , vector
+    , websockets
+  default-language: Haskell2010
+
+executable octopine-client
+  main-is: Main.hs
+  other-modules:
+      Paths_octopine
+  hs-source-dirs:
+      app/client
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , async
+    , base >=4.9 && <5
+    , base16-bytestring
+    , base64-bytestring
+    , binary
+    , blake3
+    , bytestring
+    , clock
+    , containers
+    , crypton
+    , digest
+    , directory
+    , exceptions
+    , fast-logger
+    , formatting
+    , iproute
+    , keter-rate-limiting-plugin
+    , lens
+    , list-t
+    , lrucache
+    , network
+    , o-clock
+    , octopine
+    , quic
+    , ram
+    , random
+    , stm
+    , stm-containers
+    , template-haskell
+    , text
+    , time
+    , tls
+    , transformers
+    , utf8-string
+    , uuid
+    , vector
+    , websockets
+  default-language: Haskell2010
+
+executable octopine-server
+  main-is: Main.hs
+  other-modules:
+      Paths_octopine
+  hs-source-dirs:
+      app/server
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson
+    , async
+    , base >=4.9 && <5
+    , base16-bytestring
+    , base64-bytestring
+    , binary
+    , blake3
+    , bytestring
+    , clock
+    , containers
+    , crypton
+    , digest
+    , directory
+    , exceptions
+    , fast-logger
+    , formatting
+    , iproute
+    , keter-rate-limiting-plugin
+    , lens
+    , list-t
+    , lrucache
+    , network
+    , o-clock
+    , octopine
+    , quic
+    , ram
+    , random
+    , stm
+    , stm-containers
+    , template-haskell
+    , text
+    , time
+    , tls
+    , transformers
+    , utf8-string
+    , uuid
+    , vector
+    , websockets
+  default-language: Haskell2010
+
+test-suite octopine-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Common.Codec.Shadowsocks.Aead2022.TCPTest
+      Common.Codec.Socks.AddressTest
+      Common.Codec.VMess.AeadTest
+      Common.Codec.VMess.ShakeSizeParserTest
+      Common.Crypto.Aead.NonceGeneratorTest
+      Common.Crypto.AeadTest
+      Common.Lang.GoTest
+      Common.Protocol.Shadowsocks.Aead2022Test
+      Common.Protocol.Shadowsocks.AeadTest
+      Common.Protocol.Shadowsocks.PacketWindowFilterTest
+      Common.Protocol.Shadowsocks.UserTest
+      Common.Protocol.VMess.Aead.AuthIDTest
+      Common.Protocol.VMess.Aead.KDFTest
+      Common.Protocol.VMess.IDTest
+      Common.UtilTest
+      HttpTestServer
+      SetupTest
+      Paths_octopine
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      Cabal
+    , aeson
+    , async
+    , base >=4.9 && <5
+    , base16-bytestring
+    , base64-bytestring
+    , binary
+    , blake3
+    , bytestring
+    , clock
+    , containers
+    , crypton
+    , digest
+    , directory
+    , exceptions
+    , fast-logger
+    , filepath
+    , formatting
+    , hspec
+    , iproute
+    , keter-rate-limiting-plugin
+    , lens
+    , list-t
+    , lrucache
+    , network
+    , o-clock
+    , octopine
+    , process
+    , quic
+    , ram
+    , random
+    , stm
+    , stm-containers
+    , template-haskell
+    , text
+    , time
+    , tls
+    , transformers
+    , utf8-string
+    , uuid
+    , vector
+    , websockets
+  default-language: Haskell2010

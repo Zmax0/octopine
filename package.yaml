@@ -1,0 +1,112 @@
+name:                octopine
+version:             0.1.0
+github:              "Zmax0/octopine"
+license:             Apache-2.0
+author:              "Zmax0"
+maintainer:          "example@example.com"
+copyright:           "2025 Zmax0"
+# extra-source-files:
+# - README.md
+# - CHANGELOG.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/Zmax0/octopine#readme>
+
+build-type:  Custom
+
+dependencies:
+- base >= 4.9 && < 5
+- aeson
+- async
+- base16-bytestring
+- base64-bytestring
+- binary
+- blake3
+- bytestring
+- clock
+- containers
+- crypton
+- digest
+- directory
+- exceptions
+- fast-logger
+- formatting
+- iproute
+- keter-rate-limiting-plugin
+- lens
+- list-t
+- lrucache
+- network
+- o-clock
+- quic
+- ram
+- random
+- template-haskell
+- stm
+- stm-containers
+- text
+- time
+- tls
+- transformers
+- utf8-string
+- uuid
+- vector
+- websockets
+
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wmissing-export-lists
+- -Wmissing-home-modules
+- -Wpartial-fields
+- -Wredundant-constraints
+
+library:
+  source-dirs:
+  - src
+
+executables:
+  octopine-client:
+    main:                Main.hs
+    source-dirs:         app/client
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - octopine
+
+  octopine-server:
+    main:                Main.hs
+    source-dirs:         app/server
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - octopine
+
+tests:
+  octopine-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - octopine
+    - Cabal
+    - hspec
+    - process
+    - filepath
