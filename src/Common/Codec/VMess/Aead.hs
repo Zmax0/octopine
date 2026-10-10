@@ -1,6 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 
-module Common.Codec.VMess.Aead (Authenticator (..), LengthNonce, ChunkNonce, seal, open, sizeBytes, encodeSize, decodeSize, generateChacha20Poly1305Key) where
+module Common.Codec.VMess.Aead (Authenticator (..), LengthNonce, ChunkNonce, seal, open, sizeBytes, overhead, encodeSize, decodeSize, generateChacha20Poly1305Key) where
 
 import Common.Codec.VMess.Session (Session)
 import Common.Crypto (Key)

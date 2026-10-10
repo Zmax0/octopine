@@ -10,7 +10,7 @@ import qualified Network.TLS as TLS
 import qualified Network.WebSockets as WS
 
 streamRecvChunkSize :: Int
-streamRecvChunkSize = 4096
+streamRecvChunkSize = 65535
 
 packetRecvSize :: Int
 packetRecvSize = 65535

@@ -316,7 +316,7 @@ _recvClientSendTcpPeer codec leftover (client, clientAddr) (peer, peerAddr) clie
             then _debug_ ("recv FIN" :: String)
             else do
               _debug_ $ format ("recv " % int % " bytes (leftover " % int % " bytes)") (B.length chunk') (B.length input)
-              _recvClientSendTcpPeer codec (input <> chunk') (client, clientAddr) (peer, peerAddr) clientNext peerSend
+              _recvClientSendTcpPeer codec' (input <> chunk') (client, clientAddr) (peer, peerAddr) clientNext peerSend
         Right (Just (leftover', TcpData msg)) -> do
           _debug_ $ format ("decode " % int % " bytes") (B.length msg)
           peerSend peer msg
