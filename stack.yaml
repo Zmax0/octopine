@@ -66,7 +66,7 @@
 
 # resolver: ghc-9.12.2
 # resolver: lts-24.15
-resolver: nightly-2026-07-27
+resolver: nightly-2026-11-11
 compiler: ghc-9.14.1
 
 packages:
@@ -74,3 +74,12 @@ packages:
 
 extra-deps:
 - blake3-0.3.1
+- crypton-2.2.6
+- tls-2.5.1
+- quic-0.3.22
+- crypton-x509-1.10.1
+- crypton-x509-store-1.10.0
+- crypton-x509-system-1.10.0
+- crypton-x509-validation-1.10.1
+- hpke-0.4.0
+- time-manager-0.5.2
