@@ -10,7 +10,7 @@ import Data.Binary.Get (Get, getByteString, getWord16be, getWord8, runGet, skip)
 import Data.Binary.Put (putByteString, putWord16be, putWord32be)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.Text.Encoding (decodeUtf8', encodeUtf8)
 import Network.Socket (SockAddr (SockAddrInet, SockAddrInet6), hostAddressToTuple, tupleToHostAddress, tupleToHostAddress6)
 
 decode :: Get Address
@@ -22,7 +22,10 @@ decode = do
     4 -> do
       host <- tupleToHostAddress6 <$> ((,,,,,,,) <$> getWord16be <*> getWord16be <*> getWord16be <*> getWord16be <*> getWord16be <*> getWord16be <*> getWord16be <*> getWord16be)
       SockAddr . (\port -> SockAddrInet6 port 0 host 0) . fromIntegral <$> getWord16be
-    3 -> Network.Domain . decodeUtf8 <$> (getByteString . fromIntegral =<< getWord8) <*> getWord16be
+    3 -> do
+      bytes <- getByteString . fromIntegral =<< getWord8
+      host <- either (const $ fail "invalid UTF-8 domain") pure $ decodeUtf8' bytes
+      Network.Domain host <$> getWord16be
     other -> fail $ "unknown socks address type: " ++ show other
 
 encode :: Address -> Put

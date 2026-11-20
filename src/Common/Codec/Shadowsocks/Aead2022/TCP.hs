@@ -77,14 +77,14 @@ import Common.Exception (AppExceptionKind (InvariantError, ProtocolError), throw
 import Common.Logger (loggers, trace_)
 import Common.Network.Address (Address)
 import Common.Protocol.Shadowsocks (Mode (Client, Server), Salt (Salt))
-import Common.Protocol.Shadowsocks.Aead2022 (identitySubKey, supportEih)
+import Common.Protocol.Shadowsocks.Aead2022 (identityCipherKey, supportEih)
 import Common.Protocol.Shadowsocks.User (ServerUser (ServerUser), ServerUserManager, getUserByHash)
 import Common.Util (encodeWord16BE, showByteString)
 import Control.Concurrent.STM (atomically, readTVar)
 import Control.Lens ((&), (.~))
-import Control.Monad (when)
+import Control.Monad (when, zipWithM)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Trans.State.Strict (StateT, get, put, runState)
+import Control.Monad.Trans.State.Strict (StateT, get, put, runStateT)
 import Data.Binary.Builder (toLazyByteString)
 import Data.Binary.Get (Get, getByteString, getInt64be, getWord16be, getWord8, runGetOrFail, skip)
 import qualified Data.ByteArray.Sized as Sized
@@ -135,8 +135,8 @@ _newHeader mode (Salt salt) msg = do
       length' = min 0xffff $ B.length msg
       (variable, leftover) = B.splitAt length' msg
       length'' = encodeWord16BE length'
-      (fixed, auth') = runState (seal $ mode' <> timestamp' <> salt <> length'') auth
-      (variable', auth'') = runState (seal variable) auth'
+  (fixed, auth') <- runStateT (seal $ mode' <> timestamp' <> salt <> length'') auth
+  (variable', auth'') <- runStateT (seal variable) auth'
   put auth''
   return (fixed, variable', leftover)
 
@@ -161,9 +161,11 @@ initDecoder kind key hasUsers saltCache userManager msg = do
           then do
             let eih = B.take 16 sealedHeader
             liftIO $ newDecoderWithEih kind key salt'' eih identity' userManager
-          else pure (Aead2022.newDecoder kind key salt'', identity')
+          else do
+            decoder <- Aead2022.newDecoder kind key salt''
+            pure (decoder, identity')
       let auth = _auth decoder
-          (header, auth') = runState (open $ B.drop eihLength sealedHeader) auth
+      (header, auth') <- runStateT (open $ B.drop eihLength sealedHeader) auth
       (timestamp, requestSalt', length') <-
         case runGetOrFail (parseHeader mode saltLength) (B.fromStrict header) of
           Left (_, _, err) -> throwApp ProtocolError err
@@ -174,8 +176,8 @@ initDecoder kind key hasUsers saltCache userManager msg = do
         then pure Nothing
         else do
           let (ciphertext, leftover''') = B.splitAt ciphertextLength leftover''
-              (plaintext, auth'') = runState (open ciphertext) auth'
-              decoder' = _update auth'' decoder
+          (plaintext, auth'') <- runStateT (open ciphertext) auth'
+          let decoder' = _update auth'' decoder
               sessionWithIdentity = session & Session.identity .~ identity''
           session' <-
             case requestSalt' of
@@ -231,11 +233,11 @@ parseAddress = do
 
 newDecoderWithEih :: CipherKind -> Key -> Salt -> StrictByteString -> Identity.Identity -> ServerUserManager -> IO (AeadDecoder, Identity.Identity)
 newDecoderWithEih kind key salt' eih identity userManager = do
-  let subKey = identitySubKey key salt'
+  let subKey = identityCipherKey kind key salt'
       userHash = B.take 16 eih
   userHash' <- case kind of
-    Aead2022Blake3Aes128Gcm -> return $ aes128EcbNoPaddingDecrypt subKey userHash :: IO StrictByteString
-    Aead2022Blake3Aes256Gcm -> return $ aes256EcbNoPaddingDecrypt subKey userHash :: IO StrictByteString
+    Aead2022Blake3Aes128Gcm -> aes128EcbNoPaddingDecrypt subKey userHash :: IO StrictByteString
+    Aead2022Blake3Aes256Gcm -> aes256EcbNoPaddingDecrypt subKey userHash :: IO StrictByteString
     _ -> throwApp InvariantError $ show kind ++ " doesn't support EIH"
   _trace_ $ "server EIH: " ++ showByteString eih ++ ", hash: " ++ showByteString userHash'
   user' <- atomically $ getUserByHash userManager userHash'
@@ -245,16 +247,17 @@ newDecoderWithEih kind key salt' eih identity userManager = do
       let ServerUser name key' _ = user''
           identity' = identity & Identity.user .~ Just user''
       _trace_ $ "user [" ++ T.unpack name ++ "] chosen by EIH"
-      return (Aead2022.newDecoder kind key' salt', identity')
+      decoder <- Aead2022.newDecoder kind key' salt'
+      return (decoder, identity')
 
-withEih :: CipherKind -> Key -> [Key] -> Salt -> StrictByteString
+withEih :: CipherKind -> Key -> [Key] -> Salt -> IO StrictByteString
 withEih kind key identityKeys salt' = do
-  let subKeys = [identityKey `identitySubKey` salt' | identityKey <- identityKeys]
+  let subKeys = [identityCipherKey kind identityKey salt' | identityKey <- identityKeys]
       identityKeyHashes = [B.take 16 $ blake3Hash [identityKey] | identityKey <- drop 1 identityKeys ++ [key]]
   case kind of
-    Aead2022Blake3Aes128Gcm -> B.concat $ zipWith aes128EcbNoPaddingEncrypt subKeys identityKeyHashes
-    Aead2022Blake3Aes256Gcm -> B.concat $ zipWith aes256EcbNoPaddingEncrypt subKeys identityKeyHashes
-    _ -> error $ show kind ++ " doesn't support EIH"
+    Aead2022Blake3Aes128Gcm -> fmap B.concat $ zipWithM aes128EcbNoPaddingEncrypt subKeys identityKeyHashes
+    Aead2022Blake3Aes256Gcm -> fmap B.concat $ zipWithM aes256EcbNoPaddingEncrypt subKeys identityKeyHashes
+    _ -> throwApp InvariantError $ show kind ++ " doesn't support EIH"
 
 blake3Hash :: [StrictByteString] -> StrictByteString
 blake3Hash bin = do

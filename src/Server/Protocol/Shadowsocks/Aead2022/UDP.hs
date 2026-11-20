@@ -69,7 +69,7 @@ $(loggers "s.p.s.a.UDP" ['trace_])
 encodeServerPacketAead2022 :: CipherKind -> Key -> Session -> Address -> StrictByteString -> IO StrictByteString
 encodeServerPacketAead2022 kind contextKey session@(Session _ _ _ user) addr msg = do
   paddingLength <- nextPaddingLength msg
-  let nonceLength = getNonceLength kind
+  nonceLength <- getNonceLength kind
   nonce <- rollBytes nonceLength
   padding <- rollBytes paddingLength
   now <- newTimestamp
@@ -77,10 +77,10 @@ encodeServerPacketAead2022 kind contextKey session@(Session _ _ _ user) addr msg
       addr' = B.toStrict $ runPut $ Address.encode addr
       msg' = (header <> addr' <> msg)
   case kind of
-    Aead2022Blake3Aes128Gcm -> pure $ aesEncrypt msg'
-    Aead2022Blake3Aes256Gcm -> pure $ aesEncrypt msg'
-    Aead2022Blake3ChaCha8Poly1305 -> pure $ chachaEncrypt nonceLength msg'
-    Aead2022Blake3ChaCha20Poly1305 -> pure $ chachaEncrypt nonceLength msg'
+    Aead2022Blake3Aes128Gcm -> aesEncrypt msg'
+    Aead2022Blake3Aes256Gcm -> aesEncrypt msg'
+    Aead2022Blake3ChaCha8Poly1305 -> chachaEncrypt nonceLength msg'
+    Aead2022Blake3ChaCha20Poly1305 -> chachaEncrypt nonceLength msg'
     k -> throwApp ProtocolError $ show k ++ "is not an AEAD 2022 cipher"
   where
     buildHeader nonce' now' padding' =
@@ -98,24 +98,24 @@ encodeServerPacketAead2022 kind contextKey session@(Session _ _ _ user) addr msg
           key = case user of
             Just (ServerUser _ userKey _) -> userKey
             Nothing -> contextKey
-          cipherHeader = case kind of
-            Aead2022Blake3Aes128Gcm -> aes128EcbNoPaddingEncrypt key header
-            Aead2022Blake3Aes256Gcm -> aes256EcbNoPaddingEncrypt key header
-            other -> error $ show other ++ " is not an AEAD 2022 AES cipher"
-          cipher = newCipher kind key (session ^. serverSessionId)
-          cipherTail = encrypt cipher nonce B.empty tail'
-      (cipherHeader <> cipherTail)
+      cipherHeader <- case kind of
+        Aead2022Blake3Aes128Gcm -> aes128EcbNoPaddingEncrypt key header
+        Aead2022Blake3Aes256Gcm -> aes256EcbNoPaddingEncrypt key header
+        other -> throwApp ProtocolError $ show other ++ " is not an AEAD 2022 AES cipher"
+      cipher <- newCipher kind key (session ^. serverSessionId)
+      cipherTail <- encrypt cipher nonce B.empty tail'
+      pure (cipherHeader <> cipherTail)
     chachaEncrypt nonceLength plaintext = do
       let (nonce, plaintext') = B.splitAt nonceLength plaintext
-          cipher = newCipher kind contextKey (session ^. serverSessionId)
-          ciphertext = encrypt cipher nonce B.empty plaintext'
-      (nonce <> ciphertext)
+      cipher <- newCipher kind contextKey (session ^. serverSessionId)
+      ciphertext <- encrypt cipher nonce B.empty plaintext'
+      pure (nonce <> ciphertext)
 
 decodeClientPacketAead2022 :: CipherKind -> Key -> ServerUserManager -> StrictByteString -> IO (StrictByteString, Address, Session)
 decodeClientPacketAead2022 kind contextKey userManager msg = do
   requireEih <- if supportEih kind then (> 0) <$> atomically (userCount userManager) else pure $ False
-  let nonceLength = getNonceLength kind
-      tagSize' = tagSize kind
+  nonceLength <- getNonceLength kind
+  let tagSize' = tagSize kind
       eihSize = if requireEih then 16 else 0
       headerLength = nonceLength + tagSize' + 8 + 8 + eihSize + 1 + 8 + 2
   when (B.length msg < headerLength) $ throwApp ProtocolError $ TL.unpack $ do
@@ -125,8 +125,8 @@ decodeClientPacketAead2022 kind contextKey userManager msg = do
       then do
         let (encryptedSessionIdPacketId, encryptedPacket) = B.splitAt 16 msg
         sessionIdPacketId <- case kind of
-          Aead2022Blake3Aes128Gcm -> pure $ aes128EcbNoPaddingDecrypt contextKey encryptedSessionIdPacketId
-          Aead2022Blake3Aes256Gcm -> pure $ aes256EcbNoPaddingDecrypt contextKey encryptedSessionIdPacketId
+          Aead2022Blake3Aes128Gcm -> aes128EcbNoPaddingDecrypt contextKey encryptedSessionIdPacketId
+          Aead2022Blake3Aes256Gcm -> aes256EcbNoPaddingDecrypt contextKey encryptedSessionIdPacketId
           other -> throwApp ProtocolError $ show other ++ " is not an AEAD 2022 AES cipher"
         let nonce = B.drop 4 sessionIdPacketId
             (sessionIdBytes, packetIdBytes) = B.splitAt 8 sessionIdPacketId
@@ -137,8 +137,8 @@ decodeClientPacketAead2022 kind contextKey userManager msg = do
             then do
               let (encryptedEih, _) = B.splitAt 16 encryptedPacket
               decryptedEih <- case kind of
-                Aead2022Blake3Aes128Gcm -> pure $ aes128EcbNoPaddingDecrypt contextKey encryptedEih
-                Aead2022Blake3Aes256Gcm -> pure $ aes256EcbNoPaddingDecrypt contextKey encryptedEih
+                Aead2022Blake3Aes128Gcm -> aes128EcbNoPaddingDecrypt contextKey encryptedEih
+                Aead2022Blake3Aes256Gcm -> aes256EcbNoPaddingDecrypt contextKey encryptedEih
                 other -> throwApp ProtocolError $ show other ++ " is not an AEAD 2022 AES cipher"
               let eih = B.pack $ B.zipWith xor decryptedEih sessionIdPacketId
               _trace_ $ "packet header, EIH:" ++ showByteString decryptedEih ++ ", session_id:" ++ show sessionId ++ ", packet_id:" ++ show packetId'
@@ -153,13 +153,13 @@ decodeClientPacketAead2022 kind contextKey userManager msg = do
               Just (ServerUser _ userKey _) -> userKey
               Nothing -> contextKey
             packetCiphertext = if requireEih then B.drop 16 encryptedPacket else encryptedPacket
-            packet = decrypt (newCipher kind key sessionId) nonce B.empty packetCiphertext
+        packet <- newCipher kind key sessionId >>= \cipher -> decrypt cipher nonce B.empty packetCiphertext
         return (sessionId, packetId', user, packet)
       else do
         let (nonce, ciphertext) = B.splitAt nonceLength msg
             sessionId = decodeWord64BE ciphertext
-            plaintext = decrypt (newCipher kind contextKey sessionId) nonce B.empty ciphertext
-            (sessionIdBytes, packetAndHeader) = B.splitAt 8 plaintext
+        plaintext <- newCipher kind contextKey sessionId >>= \cipher -> decrypt cipher nonce B.empty ciphertext
+        let (sessionIdBytes, packetAndHeader) = B.splitAt 8 plaintext
             (packetIdBytes, packet) = B.splitAt 8 packetAndHeader
         return (decodeWord64BE sessionIdBytes, decodeWord64BE packetIdBytes, Nothing, packet)
   case runGetOrFail ((,,) <$> getWord8 <*> getInt64be <*> getWord16be) (B.fromStrict packet) of

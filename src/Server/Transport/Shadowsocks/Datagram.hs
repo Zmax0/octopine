@@ -144,30 +144,26 @@ relay codec@(Shadowsocks.PacketCodec kind _ _) client cache = do
     thread <- myThreadId
     labelThread thread $ showThreadId thread ++ " - " ++ show clientAddr
     _debug_ $ format ("recv " % int % " bytes") (B.length msg)
-    decoded <- Shadowsocks.decodeDatagram codec msg
-    case decoded of
-      Left exception -> E.throwIO exception
-      Right Nothing -> throwApp ProtocolError "decode failed, empty packet"
-      Right (Just decoded') -> do
-        (payload, peerAddr, key, sessionId, session) <- case decoded' of
-          Shadowsocks.DecodedDatagram _ (UdpData payload' peerAddr') session' ->
-            let (key, sessionId) =
-                  if isAead2022 kind
-                    then
-                      let UdpSession.Session clientSessionId _ _ _ = session'
-                       in (SessionKey clientSessionId, clientSessionId)
-                    else (ClientKey clientAddr, 0)
-             in return (payload', peerAddr', key, sessionId, session')
-          Shadowsocks.DecodedDatagram _ frame _ -> throwApp InvariantError ("decode failed, expected UdpData, actual: " ++ show frame)
-        let packet = ClientPacket payload peerAddr session
-        now <- getTime Monotonic
-        associate <- touchAssociate cache key now
-        case associate of
-          Just (Associate events _) -> atomically $ writeTBQueue events packet
-          Nothing -> do
-            session' <- newSession sessionId
-            Associate events _ <- newAssociate (isAead2022 kind) codec client cache key clientAddr peerAddr session' now
-            atomically $ writeTBQueue events packet
+    decoded' <- Shadowsocks.decodeDatagram codec msg
+    (payload, peerAddr, key, sessionId, session) <- case decoded' of
+      Shadowsocks.DecodedDatagram _ (UdpData payload' peerAddr') session' ->
+        let (key, sessionId) =
+              if isAead2022 kind
+                then
+                  let UdpSession.Session clientSessionId _ _ _ = session'
+                   in (SessionKey clientSessionId, clientSessionId)
+                else (ClientKey clientAddr, 0)
+         in return (payload', peerAddr', key, sessionId, session')
+      Shadowsocks.DecodedDatagram _ frame _ -> throwApp InvariantError ("decode failed, expected UdpData, actual: " ++ show frame)
+    let packet = ClientPacket payload peerAddr session
+    now <- getTime Monotonic
+    associate <- touchAssociate cache key now
+    case associate of
+      Just (Associate events _) -> atomically $ writeTBQueue events packet
+      Nothing -> do
+        session' <- newSession sessionId
+        Associate events _ <- newAssociate (isAead2022 kind) codec client cache key clientAddr peerAddr session' now
+        atomically $ writeTBQueue events packet
 
 newSession :: Word64 -> IO UdpSession.Session
 newSession clientSessionId' = do

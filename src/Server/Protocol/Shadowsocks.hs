@@ -32,10 +32,10 @@ instance Show Context where
 
 instance ServerProtocol Context Codec.PayloadCodec where
   newServerContext config = do
-    userManager <- atomically $ User.fromConfig $ user config
-    saltCache <- atomically $ TinyLRU.initTinyLRU maxBound
     let kind = cipher config
-    key <- if isAead2022 kind then fst <$> passwordToKeys (password config) else return $ opensslBytesToKey (encodeUtf8 $ password config) (keySize kind)
+    userManager <- User.fromConfig kind $ user config
+    saltCache <- atomically $ TinyLRU.initTinyLRU maxBound
+    key <- if isAead2022 kind then fst <$> passwordToKeys kind (password config) else return $ opensslBytesToKey (encodeUtf8 $ password config) (keySize kind)
     let label' = "shadowsocks|" ++ show kind ++ "|" ++ T.unpack (host config) ++ ":" ++ show (port config)
     return $ Context kind key saltCache userManager label'
 

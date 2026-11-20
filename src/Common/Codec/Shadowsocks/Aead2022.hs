@@ -12,8 +12,9 @@ import Common.Crypto (Key)
 import Common.Crypto.Aead (CipherKind (..))
 import Common.Exception (AppExceptionKind (ProtocolError), throwApp)
 import Common.Protocol.Shadowsocks (Salt)
-import Common.Protocol.Shadowsocks.Aead2022 (sessionSubKey)
+import Common.Protocol.Shadowsocks.Aead2022 (sessionCipherKey)
 import Control.Monad (when)
+import Control.Monad.Catch (MonadThrow)
 import Crypto.Number.Generate (generateBetween)
 import Data.ByteString (StrictByteString)
 import qualified Data.ByteString as B
@@ -21,18 +22,19 @@ import Data.Int (Int64)
 import qualified Data.Text.Lazy as TL
 import Data.Time.Clock.System (SystemTime (systemSeconds), getSystemTime)
 import Formatting (format, int, (%))
+import GHC.Stack (HasCallStack)
 
-newEncoder :: CipherKind -> Key -> Salt -> AeadEncoder
+newEncoder :: (MonadThrow m, HasCallStack) => CipherKind -> Key -> Salt -> m AeadEncoder
 newEncoder kind key salt' = do
-  let key' = sessionSubKey key salt'
-      auth = newAuthenticator kind key'
-  AeadEncoder auth
+  let key' = sessionCipherKey kind key salt'
+  auth <- newAuthenticator kind key'
+  pure $ AeadEncoder auth
 
-newDecoder :: CipherKind -> Key -> Salt -> AeadDecoder
+newDecoder :: (MonadThrow m, HasCallStack) => CipherKind -> Key -> Salt -> m AeadDecoder
 newDecoder kind key salt' = do
-  let key' = sessionSubKey key salt'
-      auth = newAuthenticator kind key'
-  DecodeLength auth
+  let key' = sessionCipherKey kind key salt'
+  auth <- newAuthenticator kind key'
+  pure $ DecodeLength auth
 
 newTimestamp :: IO Int64
 newTimestamp = systemSeconds <$> getSystemTime

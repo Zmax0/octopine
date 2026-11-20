@@ -23,10 +23,9 @@ import Common.Protocol.Shadowsocks.Aead (hkdfsha1)
 import Common.Protocol.Shadowsocks.Aead2022 (isAead2022)
 import qualified Common.Protocol.Shadowsocks.UDP.Session as UdpSession
 import Common.Protocol.Shadowsocks.User (ServerUser (ServerUser), ServerUserManager)
-import Control.Exception (SomeException)
 import Control.Lens ((&), (.~), (^.))
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State.Strict (StateT, get, put, runState, runStateT)
+import Control.Monad.Trans.State.Strict (StateT, get, put, runStateT)
 import Data.Binary.Get (runGetOrFail)
 import Data.Binary.Put (runPut)
 import Data.ByteString (StrictByteString)
@@ -45,6 +44,7 @@ type ChunkDecoder = Aead.AeadDecoder
 data PayloadCodec = PayloadCodec TCPSession.Session ChunkEncoder ChunkDecoder deriving (Show)
 
 newPayloadCodec :: ShadowsocksSettings -> StrictByteString -> IO (NewCodecResult PayloadCodec)
+newPayloadCodec (ShadowsocksSettings kind _ _ _ _) msg | B.length msg < keySize kind = pure Nothing
 newPayloadCodec (ShadowsocksSettings kind key hasUsers saltCache userManager) msg = do
   if isAead2022 kind
     then do
@@ -52,35 +52,34 @@ newPayloadCodec (ShadowsocksSettings kind key hasUsers saltCache userManager) ms
       let session = TCPSession.Session Server Nothing identity
       (decoded, session') <- runStateT (Aead2022.TCP.initDecoder kind key hasUsers saltCache userManager msg) session
       case decoded of
-        Nothing -> return $ Right Nothing
+        Nothing -> return Nothing
         Just (leftover, plaintext, decoder) ->
           case session' ^. TCPSession.address of
             Nothing -> throwApp ProtocolError "AEAD2022 request header did not contain an address"
             Just address -> do
               peerAddr <- parseAddr address
               let salt = session' ^. TCPSession.identity . Identity.salt
-                  encoder = PendingSalt salt $ newChunkEncoder kind key session'
                   frames = OpenTcp peerAddr : [TcpData plaintext | not $ B.null plaintext]
-              return $ Right $ Just (leftover, frames, PayloadCodec session' encoder decoder)
+              encoder <- PendingSalt salt <$> newChunkEncoder kind key session'
+              return $ Just (leftover, frames, PayloadCodec session' encoder decoder)
     else do
       let (salt, ciphertext) = B.splitAt (keySize kind) msg
-          decoder = newChunkDecoder kind key $ Salt salt
+      decoder <- newChunkDecoder kind key $ Salt salt
       (result, decoder') <- runStateT (Aead.decodeChunks ciphertext) decoder
       case result of
-        Right (Just (leftover, plaintext)) ->
+        Just (leftover, plaintext) ->
           case runGetOrFail SocksAddress.decode $ B.fromStrict plaintext of
             Right (pending, _, address) -> do
               peerAddr <- parseAddr address
               identity <- Identity.newIdentity kind
               let session = TCPSession.Session Server (Just address) identity
                   salt' = identity ^. Identity.salt
-                  encoder = PendingSalt salt' $ newChunkEncoder kind key session
                   payload = B.toStrict pending
                   frames = OpenTcp peerAddr : [TcpData payload | not $ B.null payload]
-              return $ Right $ Just (leftover, frames, PayloadCodec session encoder decoder')
+              encoder <- PendingSalt salt' <$> newChunkEncoder kind key session
+              return $ Just (leftover, frames, PayloadCodec session encoder decoder')
             Left (_, _, err) -> throwApp ProtocolError err
-        Right Nothing -> return $ Right Nothing
-        Left exception -> return $ Left exception
+        Nothing -> return Nothing
 
 instance ServerCodec PayloadCodec where
   encode OpenTcp {} = throwApp InvariantError "shadowsocks codec does not encode connection frames"
@@ -95,7 +94,7 @@ instance ServerCodec PayloadCodec where
     PayloadCodec session encoder decoder <- get
     (result, decoder') <- lift $ runStateT (Aead.decodeChunks msg) decoder
     put $ PayloadCodec session encoder decoder'
-    return $ fmap (fmap (\(leftover, payload) -> (leftover, TcpData payload))) result
+    return $ fmap (\(leftover, payload) -> (leftover, TcpData payload)) result
 
 encodeChunk :: StrictByteString -> StateT ChunkEncoder IO StrictByteString
 encodeChunk chunk = do
@@ -119,16 +118,16 @@ payloadHeader (TCPSession.Session mode _ identity) msg = do
   (fixed, variable, leftover) <- Aead2022.TCP.newHeader mode (identity ^. Identity.requestSalt) msg
   return (fixed <> variable, leftover)
 
-newChunkEncoder :: CipherKind -> Key -> TCPSession.Session -> ChunkEncoder
+newChunkEncoder :: CipherKind -> Key -> TCPSession.Session -> IO ChunkEncoder
 newChunkEncoder kind key session@(TCPSession.Session _ _ identity) =
   let salt = identity ^. Identity.salt
    in case (isAead2022 kind, identity ^. Identity.user) of
-        (True, Just (ServerUser _ userKey _)) -> PendingHeader session $ Aead2022.newEncoder kind userKey salt
-        (True, Nothing) -> PendingHeader session $ Aead2022.newEncoder kind key salt
-        (False, _) -> EncodeChunk $ Aead.AeadEncoder $ Aead.newAuthenticator kind $ hkdfsha1 key salt
+        (True, Just (ServerUser _ userKey _)) -> PendingHeader session <$> Aead2022.newEncoder kind userKey salt
+        (True, Nothing) -> PendingHeader session <$> Aead2022.newEncoder kind key salt
+        (False, _) -> EncodeChunk . Aead.AeadEncoder <$> (Aead.newAuthenticator kind $ hkdfsha1 key salt)
 
-newChunkDecoder :: CipherKind -> Key -> Salt -> ChunkDecoder
-newChunkDecoder kind key salt = Aead.DecodeLength $ Aead.newAuthenticator kind $ hkdfsha1 key salt
+newChunkDecoder :: CipherKind -> Key -> Salt -> IO ChunkDecoder
+newChunkDecoder kind key salt = Aead.DecodeLength <$> (Aead.newAuthenticator kind $ hkdfsha1 key salt)
 
 data PacketCodec = PacketCodec CipherKind Key ServerUserManager deriving (Show)
 
@@ -148,19 +147,19 @@ encodeDatagram (PacketCodec kind key _) session (UdpData msg addr)
   | otherwise = do
       _debug_ $ "send to client; session=" ++ show session
       salt <- rollBytes $ keySize kind
-      let auth = Aead.newAuthenticator kind $ hkdfsha1 key $ Salt salt
-          address = B.toStrict $ runPut $ SocksAddress.encode $ SockAddr addr
-          (ciphertext, _) = runState (seal $ address <> msg) auth
+      auth <- Aead.newAuthenticator kind $ hkdfsha1 key $ Salt salt
+      let address = B.toStrict $ runPut $ SocksAddress.encode $ SockAddr addr
+      (ciphertext, _) <- runStateT (seal $ address <> msg) auth
       return (salt <> ciphertext, session)
 encodeDatagram _ _ _ = throwApp InvariantError "only encodes UdpData frames"
 
-decodeDatagram :: PacketCodec -> StrictByteString -> IO (Either SomeException (Maybe DecodedDatagram))
+decodeDatagram :: PacketCodec -> StrictByteString -> IO DecodedDatagram
 decodeDatagram (PacketCodec kind key userManager) msg = do
   if isAead2022 kind
     then do
       (payload, address, clientSession) <- Aead2022.UDP.decodeClientPacketAead2022 kind key userManager msg
       peerAddr <- parseAddr address
-      return $ Right $ Just $ DecodedDatagram B.empty (UdpData payload peerAddr) clientSession
+      return $ DecodedDatagram B.empty (UdpData payload peerAddr) clientSession
     else do
       let saltLength = keySize kind
           minLength = saltLength + tagSize kind
@@ -168,10 +167,10 @@ decodeDatagram (PacketCodec kind key userManager) msg = do
         then throwApp ProtocolError $ "packet too short, bytes=" ++ show (B.length msg)
         else do
           let (salt, ciphertext) = B.splitAt saltLength msg
-              auth = Aead.newAuthenticator kind $ hkdfsha1 key $ Salt salt
-              (plaintext, _) = runState (open ciphertext) auth
+          auth <- Aead.newAuthenticator kind $ hkdfsha1 key $ Salt salt
+          (plaintext, _) <- runStateT (open ciphertext) auth
           case runGetOrFail SocksAddress.decode $ B.fromStrict plaintext of
             Left (_, _, err) -> throwApp ProtocolError err
             Right (payload, _, address) -> do
               peerAddr <- parseAddr address
-              return $ Right $ Just $ DecodedDatagram B.empty (UdpData (B.toStrict payload) peerAddr) (UdpSession.Session 0 0 0 Nothing)
+              return $ DecodedDatagram B.empty (UdpData (B.toStrict payload) peerAddr) (UdpSession.Session 0 0 0 Nothing)

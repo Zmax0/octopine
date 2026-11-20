@@ -8,12 +8,14 @@ import Common.Crypto.Aead (CipherMethod, decrypt, encrypt, getCipherKind, tagSiz
 import Common.Crypto.Aead.NonceGenerator (CountingNonceGenerator, generateT)
 import Common.Util (decodeWord16BE, encodeWord16BE)
 import Control.Lens (Lens', (&), (.~), (^.))
-import Control.Monad.Trans.State.Strict (State, get, put, runState)
+import Control.Monad.Catch (MonadThrow)
+import Control.Monad.Trans.State.Strict (StateT, get, put, runState)
 import Crypto.Hash (Digest, hash)
 import Crypto.Hash.Algorithms (MD5)
 import qualified Data.ByteArray as BA
 import Data.ByteString (StrictByteString)
 import qualified Data.ByteString as B
+import GHC.Stack (HasCallStack)
 
 data Authenticator = Authenticator CipherMethod CountingNonceGenerator deriving (Show)
 
@@ -21,34 +23,34 @@ type LengthNonce = Lens' Session StrictByteString
 
 type ChunkNonce = Lens' Session StrictByteString
 
-seal :: StrictByteString -> Session -> Lens' Session StrictByteString -> State Authenticator (StrictByteString, Session)
+seal :: (MonadThrow m, HasCallStack) => StrictByteString -> Session -> Lens' Session StrictByteString -> StateT Authenticator m (StrictByteString, Session)
 seal plaintext session function = do
   Authenticator method gen <- get
   let nonce = session ^. function
       ((nonce', generatedNonce), gen') = runState (generateT nonce) gen
-      ciphertext = encrypt method generatedNonce B.empty plaintext
       session' = session & function .~ nonce'
+  ciphertext <- encrypt method generatedNonce B.empty plaintext
   put $ Authenticator method gen'
   return (ciphertext, session')
 
-open :: StrictByteString -> Session -> Lens' Session StrictByteString -> State Authenticator (StrictByteString, Session)
+open :: (MonadThrow m, HasCallStack) => StrictByteString -> Session -> Lens' Session StrictByteString -> StateT Authenticator m (StrictByteString, Session)
 open ciphertext session function = do
   Authenticator method gen <- get
   let nonce = session ^. function
       ((nonce', generatedNonce), gen') = runState (generateT nonce) gen
-      plaintext = decrypt method generatedNonce B.empty ciphertext
       session' = session & function .~ nonce'
+  plaintext <- decrypt method generatedNonce B.empty ciphertext
   put $ Authenticator method gen'
   return (plaintext, session')
 
 sizeBytes :: Authenticator -> Int
 sizeBytes = (+ 2) . overhead
 
-encodeSize :: Int -> Session -> Lens' Session StrictByteString -> State Authenticator (StrictByteString, Session)
+encodeSize :: (MonadThrow m, HasCallStack) => Int -> Session -> Lens' Session StrictByteString -> StateT Authenticator m (StrictByteString, Session)
 encodeSize length' session function = do
   seal (encodeWord16BE length') session function
 
-decodeSize :: StrictByteString -> Session -> Lens' Session StrictByteString -> State Authenticator (Int, Session)
+decodeSize :: (MonadThrow m, HasCallStack) => StrictByteString -> Session -> Lens' Session StrictByteString -> StateT Authenticator m (Int, Session)
 decodeSize msg session function = do
   (decrypted, session') <- open msg session function
   auth <- get

@@ -20,12 +20,12 @@ createAuthID key time = do
   let crc32' = crc32 $ buffer1 <> buffer2
       buffer3 = B.toStrict $ toLazyByteString $ word32BE crc32'
       key' = kdf16 key [value AuthIDEncryptionKey]
-  return $ aes128EcbNoPaddingEncrypt key' $ buffer1 <> buffer2 <> buffer3
+  aes128EcbNoPaddingEncrypt key' $ buffer1 <> buffer2 <> buffer3
 
 match :: StrictByteString -> [Key] -> IO (Maybe Key)
 match authID (key : keys) = do
-  let cur = aes128EcbNoPaddingDecrypt (kdf16 key [value AuthIDEncryptionKey]) authID :: StrictByteString
-      (l, r) = B.splitAt 12 cur
+  cur <- aes128EcbNoPaddingDecrypt (kdf16 key [value AuthIDEncryptionKey]) authID :: IO StrictByteString
+  let (l, r) = B.splitAt 12 cur
       now1 = runGet getInt64be (B.fromStrict $ B.take 8 l)
       crc32'' = runGet getInt32be (B.fromStrict r)
   now2 <- now

@@ -194,9 +194,8 @@ relay (client, clientAddr) clientChannel context = do
           let pending' = pending <> chunk
           newServerCodec' <- newServerCodec context' pending'
           case newServerCodec' of
-            Left e -> E.throwIO e
-            Right Nothing -> loop pending' (client', clientAddr') clientChannel' context'
-            Right (Just (leftover, peerFrames, codec)) ->
+            Nothing -> loop pending' (client', clientAddr') clientChannel' context'
+            Just (leftover, peerFrames, codec) ->
               E.catch @E.IOException
                 (_relay (leftover, peerFrames, codec) (client', clientAddr') clientChannel')
                 ((>> return Nothing) . _info_ . (("relay failed, " ++) . show))
@@ -309,20 +308,19 @@ _recvClientSendTcpPeer codec leftover (client, clientAddr) (peer, peerAddr) clie
       _debug_ $ format ("recv " % int % " bytes (leftover " % int % " bytes)") (B.length chunk) (B.length leftover)
       (res, codec') <- runStateT (decode input) codec
       case res of
-        Left e -> handleException _error_ e
-        Right Nothing -> do
+        Nothing -> do
           chunk' <- clientNext client
           if B.null chunk'
             then _debug_ ("recv FIN" :: String)
             else do
               _debug_ $ format ("recv " % int % " bytes (leftover " % int % " bytes)") (B.length chunk') (B.length input)
               _recvClientSendTcpPeer codec' (input <> chunk') (client, clientAddr) (peer, peerAddr) clientNext peerSend
-        Right (Just (leftover', TcpData msg)) -> do
+        Just (leftover', TcpData msg) -> do
           _debug_ $ format ("decode " % int % " bytes") (B.length msg)
           peerSend peer msg
           _debug_ $ format ("send " % int % " bytes") (B.length msg)
           _recvClientSendTcpPeer codec' leftover' (client, clientAddr) (peer, peerAddr) clientNext peerSend
-        Right (Just (_, payload)) -> throwApp InvariantError $ "expected TCP peer payload, actual: " ++ show payload
+        Just (_, payload) -> throwApp InvariantError $ "expected TCP peer payload, actual: " ++ show payload
 
 -- | client (next) -> peer (send)
 recvClientSendUdpPeer :: (ServerCodec codec) => (StrictByteString, [RelayFrame], codec) -> Endpoint client -> Socket -> (client -> IO StrictByteString) -> (Socket -> (StrictByteString, SockAddr) -> IO ()) -> IO ()
@@ -348,21 +346,20 @@ _recvClientSendUdpPeer codec leftover (client, clientAddr) peer clientNext peerS
       _debug_ $ format ("recv " % int % " bytes (leftover " % int % " bytes)") (B.length chunk) (B.length leftover)
       (res, codec') <- runStateT (decode input) codec
       case res of
-        Left e -> handleException _error_ e
-        Right Nothing -> do
+        Nothing -> do
           chunk' <- clientNext client
           if B.null chunk'
             then _debug_ ("recv FIN" :: String)
             else do
               _debug_ $ format ("recv " % int % " bytes (leftover " % int % " bytes)") (B.length chunk') (B.length input)
               _recvClientSendUdpPeer codec (input <> chunk') (client, clientAddr) peer clientNext peerSend
-        Right (Just (leftover', UdpData msg peerAddr)) -> do
+        Just (leftover', UdpData msg peerAddr) -> do
           labelThread thread $ showThreadId thread ++ " - " ++ show clientAddr ++ " > " ++ show peerAddr
           _debug_ $ format ("decode " % int % " bytes") (B.length msg)
           peerSend peer (msg, peerAddr)
           _debug_ $ format ("send " % int % " bytes") (B.length msg)
           _recvClientSendUdpPeer codec' leftover' (client, clientAddr) peer clientNext peerSend
-        Right (Just (_, payload)) -> throwApp InvariantError $ "expected UDP peer payload, actual: " ++ show payload
+        Just (_, payload) -> throwApp InvariantError $ "expected UDP peer payload, actual: " ++ show payload
 
 streamSocket :: Text -> Word16 -> IO Socket
 streamSocket host' port' = do

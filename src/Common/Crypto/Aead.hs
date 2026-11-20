@@ -7,21 +7,23 @@ module Common.Crypto.Aead (CipherKind (keySize, nonceSize, tagSize, Aes128Gcm, A
 
 import Common.Crypto (Ciphertext, Key, Plaintext)
 import qualified Common.Crypto.ChaCha8Poly1305 as ChaCha8Poly1305
+import Common.Exception (AppExceptionKind (InvariantError, ProtocolError), throwApp)
+import Control.Monad.Catch (MonadThrow)
 import qualified Crypto.Cipher.AES.GCM as AesGcm
 import qualified Crypto.Cipher.ChaCha as ChaCha
 import qualified Crypto.Cipher.ChaCha.Poly1305 as ChaCha20Poly1305
 import qualified Crypto.Cipher.ChaChaPoly1305 as ChaChaPoly1305
 import Crypto.Cipher.Types (AEAD (..), AEADModeImpl (..), AuthTag (AuthTag), aeadSimpleEncrypt, tryAeadSimpleDecrypt)
-import Crypto.Error (CryptoError (CryptoError_KeySizeInvalid), CryptoFailable (CryptoFailed), throwCryptoError)
+import Crypto.Error (CryptoFailable, onCryptoFailure)
 import qualified Crypto.MAC.Poly1305 as Poly1305
 import Data.Aeson (ToJSON)
 import Data.Aeson.Types (FromJSON (parseJSON), ToJSON (toJSON), withText)
 import Data.ByteArray (ByteArrayAccess)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
-import Data.Maybe (fromMaybe)
 import Data.Text (Text, toLower)
 import qualified Data.Text as T
+import GHC.Stack (HasCallStack)
 
 data CipherKind = CipherKind {keySize :: Int, nonceSize :: Int, tagSize :: Int, label :: Text}
 
@@ -71,7 +73,7 @@ instance FromJSON CipherKind where
     "2022-blake3-aes-256-gcm" -> return Aead2022Blake3Aes256Gcm
     "2022-blake3-chacha8-poly1305" -> return Aead2022Blake3ChaCha8Poly1305
     "2022-blake3-chacha20-poly1305" -> return Aead2022Blake3ChaCha20Poly1305
-    _ -> return Aes128Gcm
+    _ -> fail "unsupported cipher"
 
 instance ToJSON CipherKind where
   toJSON Aes128Gcm = toJSON (label Aes128Gcm)
@@ -105,32 +107,34 @@ instance Show CipherMethod where
   show (XChaCha20Poly1305Method _ k) =
     "BlockCipherMethod (xchacha20poly1305), NonceSize=" ++ show (nonceSize k) ++ ", TagSize=" ++ show (tagSize k)
 
-newCipherMethod :: CipherKind -> Key -> CipherMethod
+newCipherMethod :: (MonadThrow m, HasCallStack) => CipherKind -> Key -> m CipherMethod
 newCipherMethod Aes128Gcm key = newAesGcmCipher Aes128Gcm key
-newCipherMethod Aead2022Blake3Aes128Gcm key = newAesGcmCipher Aead2022Blake3Aes128Gcm $ B.take 16 key
+newCipherMethod Aead2022Blake3Aes128Gcm key = newAesGcmCipher Aead2022Blake3Aes128Gcm key
 newCipherMethod Aes256Gcm key = newAesGcmCipher Aes256Gcm key
 newCipherMethod Aead2022Blake3Aes256Gcm key = newAesGcmCipher Aead2022Blake3Aes256Gcm key
 newCipherMethod ChaCha8Poly1305 key = do
-  ChaCha8Poly1305Method key ChaCha8Poly1305
+  pure $ ChaCha8Poly1305Method key ChaCha8Poly1305
 newCipherMethod Aead2022Blake3ChaCha8Poly1305 key = do
-  ChaCha8Poly1305Method key Aead2022Blake3ChaCha8Poly1305
+  pure $ ChaCha8Poly1305Method key Aead2022Blake3ChaCha8Poly1305
 newCipherMethod ChaCha20Poly1305 key = do
-  let cipher = throwCryptoError $ ChaCha20Poly1305.newContext key
-  ChaCha20Poly1305Method cipher ChaCha20Poly1305
+  cipher <- cryptoOrThrow InvariantError "initialize ChaCha20-Poly1305" $ ChaCha20Poly1305.newContext key
+  pure $ ChaCha20Poly1305Method cipher ChaCha20Poly1305
 newCipherMethod XChaCha8Poly1305 key = do
-  XChaCha8Poly1305Method key XChaCha8Poly1305
+  pure $ XChaCha8Poly1305Method key XChaCha8Poly1305
 newCipherMethod Aead2022Blake3ChaCha20Poly1305 key = do
-  let cipher = throwCryptoError $ ChaCha20Poly1305.newContext key
-  ChaCha20Poly1305Method cipher Aead2022Blake3ChaCha20Poly1305
+  cipher <- cryptoOrThrow InvariantError "initialize ChaCha20-Poly1305" $ ChaCha20Poly1305.newContext key
+  pure $ ChaCha20Poly1305Method cipher Aead2022Blake3ChaCha20Poly1305
 newCipherMethod XChaCha20Poly1305 key = do
-  let cipher = throwCryptoError $ ChaChaPoly1305.key key
-  XChaCha20Poly1305Method cipher XChaCha20Poly1305
-newCipherMethod _ _ = error "unsupported"
+  cipher <- cryptoOrThrow InvariantError "initialize XChaCha20 key" $ ChaChaPoly1305.key key
+  pure $ XChaCha20Poly1305Method cipher XChaCha20Poly1305
+newCipherMethod _ _ = throwApp InvariantError "initialize unsupported cipher"
 
-newAesGcmCipher :: CipherKind -> Key -> CipherMethod
+newAesGcmCipher :: (MonadThrow m, HasCallStack) => CipherKind -> Key -> m CipherMethod
 newAesGcmCipher kind key
-  | B.length key /= keySize kind = throwCryptoError $ CryptoFailed CryptoError_KeySizeInvalid
-  | otherwise = AesGcmMethod (throwCryptoError $ AesGcm.newContext key) kind
+  | B.length key /= keySize kind = throwApp InvariantError $ "initialize " ++ show kind ++ ": invalid key length, expected=" ++ show (keySize kind) ++ ", actual=" ++ show (B.length key)
+  | otherwise = do
+      context <- cryptoOrThrow InvariantError "initialize AES-GCM" $ AesGcm.newContext key
+      pure $ AesGcmMethod context kind
 
 getCipherKind :: CipherMethod -> CipherKind
 getCipherKind (AesGcmMethod _ kind) = kind
@@ -141,20 +145,20 @@ getCipherKind (XChaCha20Poly1305Method _ kind) = kind
 
 type AAD = B.ByteString
 
-encrypt :: (ByteArrayAccess nonce) => CipherMethod -> nonce -> AAD -> Plaintext -> Ciphertext
+encrypt :: (MonadThrow m, HasCallStack, ByteArrayAccess nonce) => CipherMethod -> nonce -> AAD -> Plaintext -> m Ciphertext
 encrypt (AesGcmMethod context kind) nonce aad plaintext =
-  AesGcm.encrypt context nonce aad plaintext $ tagSize kind
+  pure $ AesGcm.encrypt context nonce aad plaintext $ tagSize kind
 encrypt (ChaCha8Poly1305Method key kind) nonce aad plaintext = do
-  let aead = aeadChaCha8Poly1305Init $ ChaCha.initialize 8 key nonce
-  encrypt' aead aad plaintext $ tagSize kind
+  aead <- aeadChaCha8Poly1305Init $ ChaCha.initialize 8 key nonce
+  pure $ encrypt' aead aad plaintext $ tagSize kind
 encrypt (ChaCha20Poly1305Method context kind) nonce aad plaintext =
-  throwCryptoError $ ChaCha20Poly1305.encrypt context nonce aad plaintext $ tagSize kind
+  cryptoOrThrow InvariantError "encrypt ChaCha20-Poly1305" $ ChaCha20Poly1305.encrypt context nonce aad plaintext $ tagSize kind
 encrypt (XChaCha8Poly1305Method key kind) nonce aad plaintext = do
-  let aead = aeadChaCha8Poly1305Init $ ChaCha.initializeX 8 key nonce
-  encrypt' aead aad plaintext $ tagSize kind
+  aead <- aeadChaCha8Poly1305Init $ ChaCha.initializeX 8 key nonce
+  pure $ encrypt' aead aad plaintext $ tagSize kind
 encrypt (XChaCha20Poly1305Method key_ kind) nonce aad plaintext = do
-  let aead = throwCryptoError $ aeadXchacha20poly1305Init key_ nonce
-  encrypt' aead aad plaintext $ tagSize kind
+  aead <- cryptoOrThrow InvariantError "initialize XChaCha20 nonce" $ aeadXchacha20poly1305Init key_ nonce
+  pure $ encrypt' aead aad plaintext $ tagSize kind
 
 type TagSize = Int
 
@@ -163,31 +167,31 @@ encrypt' aead aad plaintext tagSize' = do
   let (tag, encrypted) = aeadSimpleEncrypt aead aad plaintext tagSize'
   encrypted <> BA.convert tag
 
-decrypt :: (ByteArrayAccess nonce) => CipherMethod -> nonce -> AAD -> Ciphertext -> Plaintext
+decrypt :: (MonadThrow m, HasCallStack, ByteArrayAccess nonce) => CipherMethod -> nonce -> AAD -> Ciphertext -> m Plaintext
 decrypt (AesGcmMethod context kind) nonce aad ciphertext =
-  decryptOrError $ AesGcm.decrypt context nonce aad ciphertext $ tagSize kind
+  authenticated $ AesGcm.decrypt context nonce aad ciphertext $ tagSize kind
 decrypt (ChaCha8Poly1305Method key kind) nonce aad ciphertext = do
-  let aead = aeadChaCha8Poly1305Init $ ChaCha.initialize 8 key nonce
+  aead <- aeadChaCha8Poly1305Init $ ChaCha.initialize 8 key nonce
   decrypt' aead aad ciphertext $ tagSize kind
 decrypt (ChaCha20Poly1305Method context kind) nonce aad ciphertext =
-  decryptOrError $ ChaCha20Poly1305.decrypt context nonce aad ciphertext $ tagSize kind
+  authenticated $ ChaCha20Poly1305.decrypt context nonce aad ciphertext $ tagSize kind
 decrypt (XChaCha8Poly1305Method key kind) nonce aad ciphertext = do
-  let aead = aeadChaCha8Poly1305Init $ ChaCha.initializeX 8 key nonce
+  aead <- aeadChaCha8Poly1305Init $ ChaCha.initializeX 8 key nonce
   decrypt' aead aad ciphertext $ tagSize kind
 decrypt (XChaCha20Poly1305Method key' kind) nonce aad ciphertext = do
-  let aead = throwCryptoError $ aeadXchacha20poly1305Init key' nonce
+  aead <- cryptoOrThrow InvariantError "initialize XChaCha20 nonce" $ aeadXchacha20poly1305Init key' nonce
   decrypt' aead aad ciphertext $ tagSize kind
 
-decrypt' :: AEAD cipher -> AAD -> Ciphertext -> TagSize -> Plaintext
+decrypt' :: (MonadThrow m, HasCallStack) => AEAD cipher -> AAD -> Ciphertext -> TagSize -> m Plaintext
 decrypt' aead aad ciphertext tagSize' = do
   let length' = B.length ciphertext - tagSize'
       (ciphertext', tag) = B.splitAt length' ciphertext
       tag' = AuthTag $ BA.convert tag
-      decrypted = decryptOrError $ tryAeadSimpleDecrypt aead aad ciphertext' tagSize' tag'
+      decrypted = authenticated $ tryAeadSimpleDecrypt aead aad ciphertext' tagSize' tag'
   decrypted
 
-decryptOrError :: Maybe Plaintext -> Plaintext
-decryptOrError = fromMaybe (error "aead decrypt error")
+authenticated :: (MonadThrow m, HasCallStack) => Maybe Plaintext -> m Plaintext
+authenticated = maybe (throwApp ProtocolError "AEAD authentication failed") pure
 
 aeadXchacha20poly1305Init :: (ByteArrayAccess nonce) => ChaChaPoly1305.Key -> nonce -> CryptoFailable (AEAD ChaChaPoly1305.State)
 aeadXchacha20poly1305Init key nonce = do
@@ -202,11 +206,13 @@ aeadXchacha20poly1305Init key nonce = do
           aeadImplFinalize = \st _ -> let Poly1305.Auth tag = ChaChaPoly1305.finalize st in AuthTag tag
         }
 
-aeadChaCha8Poly1305Init :: ChaCha.State -> AEAD ChaCha8Poly1305.State
-aeadChaCha8Poly1305Init rootState = AEAD model initialState
+aeadChaCha8Poly1305Init :: (MonadThrow m, HasCallStack) => ChaCha.State -> m (AEAD ChaCha8Poly1305.State)
+aeadChaCha8Poly1305Init rootState = do
+  key <- cryptoOrThrow InvariantError "initialize Poly1305 key" $ Poly1305.key $ B.take 32 polyKey
+  let initialState = ChaCha8Poly1305.State encryptionState (Poly1305.initialize key) 0 0
+  pure $ AEAD model initialState
   where
     (polyKey, encryptionState) = ChaCha.generate rootState 64 :: (B.ByteString, ChaCha.State)
-    initialState = ChaCha8Poly1305.State encryptionState (Poly1305.initialize $ throwCryptoError $ Poly1305.key $ B.take 32 polyKey) 0 0
     model =
       AEADModeImpl
         { aeadImplAppendHeader = \state aad -> ChaCha8Poly1305.finalizeAAD $ ChaCha8Poly1305.appendAAD aad state,
@@ -214,3 +220,6 @@ aeadChaCha8Poly1305Init rootState = AEAD model initialState
           aeadImplDecrypt = ChaCha8Poly1305.decrypt,
           aeadImplFinalize = \state _ -> let Poly1305.Auth tag = ChaCha8Poly1305.finalize state in AuthTag tag
         }
+
+cryptoOrThrow :: (MonadThrow m, HasCallStack) => AppExceptionKind -> String -> CryptoFailable a -> m a
+cryptoOrThrow kind operation = onCryptoFailure (\err -> throwApp kind (operation ++ ": " ++ show err)) pure

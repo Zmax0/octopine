@@ -6,7 +6,6 @@ module Server.Protocol (DecodeResult, NewCodecResult, RelayFrame (OpenTcp, TcpDa
 
 import Common.Codec (LeftoverByteString)
 import Common.Config (ServerConfig)
-import Control.Exception (SomeException)
 import Control.Monad.Trans.State.Strict (StateT)
 import Data.ByteString (StrictByteString)
 import qualified Data.ByteString as B
@@ -19,9 +18,9 @@ relayPayload OpenTcp {} = B.empty
 relayPayload (TcpData msg) = msg
 relayPayload (UdpData msg _) = msg
 
-type DecodeResult = Either SomeException (Maybe (LeftoverByteString, RelayFrame))
+type DecodeResult = Maybe (LeftoverByteString, RelayFrame)
 
-type NewCodecResult codec = Either SomeException (Maybe (LeftoverByteString, [RelayFrame], codec))
+type NewCodecResult codec = Maybe (LeftoverByteString, [RelayFrame], codec)
 
 class ServerCodec codec where
   encode :: RelayFrame -> StateT codec IO StrictByteString

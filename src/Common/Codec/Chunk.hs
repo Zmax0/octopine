@@ -1,20 +1,23 @@
 module Common.Codec.Chunk (ChunkSizeCodec (..), EmptyChunkSizeParser (EmptyChunkSizeParser), PlainChunkSizeParser (PlainChunkSizeParser), PaddingLengthGenerator (..), EmptyPaddingLengthGenerator (EmptyPaddingLengthGenerator)) where
 
+import Common.Exception (AppExceptionKind (InvariantError), throwApp)
 import Common.Util (decodeWord16BE, encodeWord16BE)
-import Control.Monad.Trans.State.Strict (State)
+import Control.Monad.Catch (MonadThrow)
+import Control.Monad.Trans.State.Strict (State, StateT)
 import Data.ByteString (StrictByteString)
+import GHC.Stack (HasCallStack)
 
 class ChunkSizeCodec c where
   sizeBytes :: c -> Int
-  encodeSize :: Int -> State c StrictByteString
-  decodeSize :: StrictByteString -> State c Int
+  encodeSize :: (MonadThrow m, HasCallStack) => Int -> StateT c m StrictByteString
+  decodeSize :: (MonadThrow m, HasCallStack) => StrictByteString -> StateT c m Int
 
 data EmptyChunkSizeParser = EmptyChunkSizeParser deriving (Show)
 
 instance ChunkSizeCodec EmptyChunkSizeParser where
   sizeBytes _ = 0 :: Int
-  encodeSize = error "unsupported"
-  decodeSize = error "unsupported"
+  encodeSize _ = throwApp InvariantError "empty chunk parser cannot encode size"
+  decodeSize _ = throwApp InvariantError "empty chunk parser cannot decode size"
 
 data PlainChunkSizeParser = PlainChunkSizeParser deriving (Show)
 

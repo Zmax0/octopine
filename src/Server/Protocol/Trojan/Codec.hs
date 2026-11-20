@@ -4,14 +4,13 @@
 module Server.Protocol.Trojan.Codec (TrojanCodec, newTrojanCodec) where
 
 import qualified Common.Codec.Socks.Address as SocksAddress
-import Common.Exception (AppExceptionKind (InvariantError), throwApp)
+import Common.Exception (AppExceptionKind (InvariantError, ProtocolError), throwApp)
 import Common.Network.Address (Address (SockAddr), parseAddr)
 import Common.Util (encodeLengthWord16be)
 import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Except (runExceptT, throwE)
 import Control.Monad.Trans.State.Strict (get, runStateT)
-import Data.Binary.Get (Get, getByteString, getWord16be, getWord8, runGetOrFail, skip)
+import Data.Binary.Get (Decoder (..), Get, getByteString, getWord16be, getWord8, pushChunk, runGetIncremental, skip)
 import Data.Binary.Put (runPut)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
@@ -42,13 +41,14 @@ instance ServerCodec TrojanCodec where
 
   decode msg = do
     get >>= \case
-      Tcp {} -> return $ Right $ Just (B.empty, TcpData msg)
+      Tcp {} -> return $ Just (B.empty, TcpData msg)
       Udp {} -> do
-        case runGetOrFail decodePacket $ B.fromStrict msg of
-          Left _ -> return $ Right Nothing
-          Right (leftover, _, (content, addr')) -> do
+        case pushChunk (runGetIncremental decodePacket) msg of
+          Partial _ -> return Nothing
+          Fail _ _ err -> throwApp ProtocolError err
+          Done leftover _ (content, addr') -> do
             addr'' <- liftIO $ parseAddr addr'
-            return $ Right $ Just (B.toStrict leftover, UdpData content addr'')
+            return $ Just (leftover, UdpData content addr'')
         where
           decodePacket = do
             addr <- SocksAddress.decode
@@ -58,12 +58,12 @@ instance ServerCodec TrojanCodec where
             return (content, addr)
 
 newTrojanCodec :: Key -> B.ByteString -> IO (NewCodecResult TrojanCodec)
-newTrojanCodec expectedKey chunk = runExceptT $ do
-  let res = runGetOrFail go $ B.fromStrict chunk
+newTrojanCodec expectedKey chunk = do
+  let res = pushChunk (runGetIncremental go) chunk
   case res of
-    Left _ -> return Nothing
-    Right (leftover, _, parsedCodec) -> do
-      let msg = B.toStrict leftover
+    Partial _ -> return Nothing
+    Fail _ _ err -> throwApp ProtocolError err
+    Done msg _ parsedCodec -> do
       case parsedCodec of
         ParsedTcp key addr -> do
           peerAddr <- liftIO $ parseAddr addr
@@ -74,13 +74,12 @@ newTrojanCodec expectedKey chunk = runExceptT $ do
           | otherwise -> do
               (decoded, codec') <- liftIO $ runStateT (decode msg) (Udp key)
               case decoded of
-                Left e -> throwE e
-                Right Nothing -> return $ Just (msg, [], codec')
-                Right (Just (leftover', payload)) -> return $ Just (leftover', [payload], codec')
+                Nothing -> return $ Just (msg, [], codec')
+                Just (leftover', payload) -> return $ Just (leftover', [payload], codec')
   where
     go = do
       key <- getActualKey
-      unless (expectedKey == key) $ fail $ "not a valid password, actual: " ++ show key ++ ", expected: " ++ show expectedKey
+      unless (expectedKey == key) $ fail "invalid Trojan password"
       skip crlfLength
       getWord8 >>= \case
         1 -> ParsedTcp key <$> SocksAddress.decode <* skip crlfLength
